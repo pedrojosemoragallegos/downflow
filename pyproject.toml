@@ -1,0 +1,18 @@
+[project]
+name = "downflow"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Pedro José Mora Gallegos", email = "pedrojosemoragallegos@outlook.de" },
+]
+requires-python = ">=3.11"
+dependencies = []
+
+
+[build-system]
+requires = ["uv_build>=0.11.20,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = ["ipykernel>=7.3.0", "ipython>=9.14.1"]

@@ -1,0 +1,27 @@
+line-length = 88
+target-version = "py311"
+
+[lint]
+extend-select = ["I", "D205", "D415"]
+select = ["ALL"]
+ignore = [
+    "D100",   # docstring in public module
+    "D101",   # docstring
+    "D102",   # docstring public method
+    "D103",   # docstring in public function
+    "D104",   # docstring public package
+    "D105",   # docstring magic function
+    "D107",   # docstring __init__
+    "TRY003",
+    "TD002",
+    "TD003",
+    "EM101",
+    "FIX002",
+]
+
+[lint.isort]
+combine-as-imports = true
+
+[format]
+quote-style = "double"
+indent-style = "space"
