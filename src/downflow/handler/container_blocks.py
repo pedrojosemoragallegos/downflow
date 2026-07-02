@@ -11,6 +11,10 @@ from .base import Handler
 class ContainerBlock(Handler): ...
 
 
+## INLINE-CONTAINER-BLOCK HANDLER (children are inline nodes)
+class InlineContainerBlock(ContainerBlock): ...
+
+
 ## Blockquote Handler
 @final
 class Blockquote(ContainerBlock):
@@ -20,19 +24,23 @@ class Blockquote(ContainerBlock):
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:  # noqa: ARG003
         if current == ">":
-            print("MATCHED BLOCKQUOTE")
             return cls()
 
         return None
 
-    def __call__(self, current: str, peek: str, /) -> Action:  # noqa: ARG002
-        if current == ">":
-            # Consume the blockquote marker.
+    def __call__(self, current: str, peek: str, /) -> Action:
+        if current == ">" and self._at_line_start:
+            # Consume the continuation marker at the start of a line.
             self._at_line_start = False
             return Action.ADVANCE
 
+        if current == " " and not self._at_line_start:
+            # Consume the optional space after ">".
+            return Action.ADVANCE
+
         if current == "\n":
-            # Stay inside the blockquote until the next line proves otherwise.
+            if peek == "\n":
+                return Action.POP
             self._at_line_start = True
             return Action.ADVANCE
 
@@ -47,26 +55,70 @@ class Blockquote(ContainerBlock):
 ## List Handler
 @final
 class List(ContainerBlock):
+    def __init__(self) -> None:
+        self._at_line_start: bool = True
+
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:
-        if current.startswith("- "):
+        if current == "-" and peek == " ":
             return cls()
 
         return None
 
     def __call__(self, current: str, peek: str, /) -> Action:
-        return Action.ADVANCE
+        if current == "\n":
+            self._at_line_start = True
+            return Action.ADVANCE
+        if self._at_line_start:
+            if current == "-" and peek == " ":
+                self._at_line_start = False
+                return Action.DELEGATE
+            return Action.POP
+        return Action.DELEGATE
 
 
 ## ListItem Handler
 @final
 class ListItem(ContainerBlock):
+    def __init__(self) -> None:
+        self._skip_count: int = 0
+
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:
-        if current.startswith("- "):
+        if current == "-" and peek == " ":
             return cls()
 
         return None
 
     def __call__(self, current: str, peek: str, /) -> Action:
-        return Action.ADVANCE
+        if self._skip_count < 2:
+            self._skip_count += 1
+            return Action.ADVANCE
+        if current == "\n":
+            return Action.POP
+        return Action.DELEGATE
+
+
+## OrderedListItem Handler
+@final
+class OrderedListItem(ContainerBlock):
+    def __init__(self) -> None:
+        self._past_marker: bool = False
+
+    @classmethod
+    def matches(cls, current: str, peek: str, /) -> Self | None:
+        if current.isdigit() and peek == ".":
+            return cls()
+
+        return None
+
+    def __call__(self, current: str, peek: str, /) -> Action:
+        if not self._past_marker:
+            if current in "0123456789.":
+                return Action.ADVANCE
+            if current == " ":
+                self._past_marker = True
+                return Action.ADVANCE
+        if current == "\n":
+            return Action.POP
+        return Action.DELEGATE

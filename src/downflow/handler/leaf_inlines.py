@@ -8,92 +8,119 @@ from .base import Handler
 
 
 ## INLINE-LEAF HANDLER
-class LeafInline(Handler): ...
+class LeafInline(Handler):
+    def __init__(self) -> None:
+        self._content: str = ""
+
+    @property
+    def content(self) -> str:
+        return self._content
 
 
 ## Code Span Handler
 @final
 class CodeSpan(LeafInline):
-    def handle(self, cursor: Cursor, engine: Engine) -> Self:
-        if cursor.current_char() == "`":
-            cursor.advance()
-            code_content = ""
-            while cursor.current_char() != "`" and not cursor.is_at_end():
-                code_content += cursor.current_char()
-                cursor.advance()
-            if cursor.current_char() == "`":
-                cursor.advance()
-                engine.add_action(Action("code_span", code_content))
-        return self
+    def __init__(self) -> None:
+        super().__init__()
+        self._opened: bool = False
+
+    @classmethod
+    def matches(cls, current: str, peek: str, /) -> Self | None:
+        if current == "`":
+            return cls()
+        return None
+
+    def __call__(self, current: str, peek: str, /) -> Action:
+        if not self._opened:
+            self._opened = True
+            return Action.ADVANCE
+        if current == "`":
+            return Action.POP_AND_ADVANCE
+        self._content += current
+        return Action.ADVANCE
 
 
 ## Autolink Handler
 @final
 class AutoLink(LeafInline):
-    def handle(self, cursor: Cursor, engine: Engine) -> Self:
-        if cursor.current_char() == "<":
-            cursor.advance()
-            link_content = ""
-            while cursor.current_char() != ">" and not cursor.is_at_end():
-                link_content += cursor.current_char()
-                cursor.advance()
-            if cursor.current_char() == ">":
-                cursor.advance()
-                engine.add_action(Action("autolink", link_content))
-        return self
+    def __init__(self) -> None:
+        super().__init__()
+        self._opened: bool = False
+
+    @classmethod
+    def matches(cls, current: str, peek: str, /) -> Self | None:
+        if current == "<":
+            return cls()
+        return None
+
+    def __call__(self, current: str, peek: str, /) -> Action:
+        if not self._opened:
+            self._opened = True
+            return Action.ADVANCE
+        if current == ">":
+            return Action.POP_AND_ADVANCE
+        self._content += current
+        return Action.ADVANCE
 
 
 ## Raw HTML Handler
 @final
 class RawHTML(LeafInline):
-    def handle(self, cursor: Cursor, engine: Engine) -> Self:
-        if cursor.current_char() == "<":
-            cursor.advance()
-            html_content = ""
-            while cursor.current_char() != ">" and not cursor.is_at_end():
-                html_content += cursor.current_char()
-                cursor.advance()
-            if cursor.current_char() == ">":
-                cursor.advance()
-                engine.add_action(Action("raw_html", html_content))
-        return self
+    def __init__(self) -> None:
+        super().__init__()
+        self._opened: bool = False
+
+    @classmethod
+    def matches(cls, current: str, peek: str, /) -> Self | None:
+        if current == "<":
+            return cls()
+        return None
+
+    def __call__(self, current: str, peek: str, /) -> Action:
+        if not self._opened:
+            self._opened = True
+            return Action.ADVANCE
+        if current == ">":
+            return Action.POP_AND_ADVANCE
+        self._content += current
+        return Action.ADVANCE
 
 
 ## Hardline Break Handler
 @final
 class HardlineBreak(LeafInline):
-    def handle(self, cursor: Cursor, engine: Engine) -> Self:
-        if cursor.current_char() == "\\":
-            cursor.advance()
-            if cursor.current_char() == "\n":
-                cursor.advance()
-                engine.add_action(Action("hardline_break"))
-        return self
+    @classmethod
+    def matches(cls, current: str, peek: str, /) -> Self | None:
+        if current == "\\" and peek == "\n":
+            return cls()
+        return None
+
+    def __call__(self, current: str, peek: str, /) -> Action:
+        if current == "\\":
+            return Action.ADVANCE
+        return Action.POP_AND_ADVANCE
 
 
 ## Softline Break Handler
 @final
 class SoftlineBreak(LeafInline):
-    def handle(self, cursor: Cursor, engine: Engine) -> Self:
-        if cursor.current_char() == "\n":
-            cursor.advance()
-            engine.add_action(Action("softline_break"))
-        return self
+    @classmethod
+    def matches(cls, current: str, peek: str, /) -> Self | None:
+        if current == "\n":
+            return cls()
+        return None
+
+    def __call__(self, current: str, peek: str, /) -> Action:
+        return Action.POP_AND_ADVANCE
 
 
 ## Textual Content Handler
 @final
 class Text(LeafInline):
-    def handle(self, cursor: Cursor, engine: Engine) -> Self:
-        text_content = ""
-        while not cursor.is_at_end() and cursor.current_char() not in [
-            "`",
-            "<",
-            "\\",
-            "\n",
-        ]:
-            text_content += cursor.current_char()
-            cursor.advance()
-        if text_content:
-            engine.add_action(Action("text", text_content))
-        return self
+    @classmethod
+    def matches(cls, current: str, peek: str, /) -> Self | None:
+        return cls()
+
+    def __call__(self, current: str, peek: str, /) -> Action:
+        self._content += current
+        return Action.POP_AND_ADVANCE

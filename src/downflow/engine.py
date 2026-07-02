@@ -2,16 +2,99 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, cast
 
-from downflow.abstract_syntax_tree.base import Node
-from downflow.handler.container_blocks import ContainerBlock
-from downflow.handler.container_inlines import ContainerInline
-from downflow.handler.leaf_blocks import LeafBlock
-from downflow.handler.leaf_inlines import LeafInline
+from downflow.abstract_syntax_tree.base import (
+    ATXHeadingNode,
+    AutoLinkNode,
+    BlockquoteNode,
+    CodeSpanNode,
+    ContainerNode,
+    EmphasisNode,
+    FencedCodeBlockNode,
+    HardlineBreakNode,
+    HTMLBlockNode,
+    ImageNode,
+    IndentedCodeBlockNode,
+    LinkNode,
+    LinkReferenceDefinitionNode,
+    ListItemNode,
+    ListNode,
+    Node,
+    OrderedListItemNode,
+    ParagraphNode,
+    RawHTMLNode,
+    SoftlineBreakNode,
+    StrikethroughNode,
+    StrongEmphasisNode,
+    TextNode,
+    ThematicBreakNode,
+)
+from downflow.handler.container_blocks import (
+    Blockquote,
+    ContainerBlock,
+    InlineContainerBlock,
+    List,
+    ListItem,
+    OrderedListItem,
+)
+from downflow.handler.container_inlines import (
+    ContainerInline,
+    Emphasis,
+    Image,
+    Link,
+    Strikethrough,
+    StrongEmphasis,
+)
+from downflow.handler.leaf_blocks import (
+    ATXHeading,
+    FencedCodeBlock,
+    HTMLBlock,
+    IndentedCodeBlock,
+    LeafBlock,
+    LinkReferenceDefinition,
+    Paragraph,
+    ThematicBreak,
+)
+from downflow.handler.leaf_inlines import (
+    AutoLink,
+    CodeSpan,
+    HardlineBreak,
+    LeafInline,
+    RawHTML,
+    SoftlineBreak,
+    Text,
+)
 
 from .action import Action
 
 if TYPE_CHECKING:
-    from downflow.abstract_syntax_tree.base import Node
+    from collections.abc import Callable
+
+_NODE_MAP: dict[type, Callable[..., Node]] = {
+    Blockquote: BlockquoteNode,
+    List: ListNode,
+    ListItem: ListItemNode,
+    OrderedListItem: OrderedListItemNode,
+    ThematicBreak: ThematicBreakNode,
+    ATXHeading: ATXHeadingNode,
+    IndentedCodeBlock: IndentedCodeBlockNode,
+    FencedCodeBlock: FencedCodeBlockNode,
+    HTMLBlock: HTMLBlockNode,
+    LinkReferenceDefinition: LinkReferenceDefinitionNode,
+    Paragraph: ParagraphNode,
+    Emphasis: EmphasisNode,
+    StrongEmphasis: StrongEmphasisNode,
+    Link: LinkNode,
+    Image: ImageNode,
+    Strikethrough: StrikethroughNode,
+    CodeSpan: CodeSpanNode,
+    AutoLink: AutoLinkNode,
+    RawHTML: RawHTMLNode,
+    HardlineBreak: HardlineBreakNode,
+    SoftlineBreak: SoftlineBreakNode,
+    Text: TextNode,
+}
+
+if TYPE_CHECKING:
     from downflow.cursor import Cursor
 
     from .handler import HandlerChain
@@ -58,6 +141,28 @@ class Engine:
         else:
             raise TypeError(f"Invalid handler type: {type(handler)}")  # noqa: EM102
 
+    def _emit(
+        self,
+        handler: ContainerBlock | LeafBlock | ContainerInline | LeafInline,
+        /,
+    ) -> None:
+        if isinstance(handler, (ContainerBlock, ContainerInline)):
+            if self._stack and isinstance(
+                self._stack[-1],
+                (ContainerBlock, ContainerInline),
+            ):
+                node: Node = self._document.pop()
+                cast("ContainerNode", self._document[-1]).append(node)
+        else:
+            node = _NODE_MAP[type(handler)](handler.content)  # type: ignore[union-attr]
+            if self._stack and isinstance(
+                self._stack[-1],
+                (ContainerBlock, ContainerInline),
+            ):
+                cast("ContainerNode", self._document[-1]).append(node)
+            else:
+                self._document.append(node)
+
     def _dispatch(self) -> Action:  # noqa: PLR0911
         self._cursor: Cursor = cast(
             typ="Cursor",
@@ -65,41 +170,28 @@ class Engine:
         )
 
         if not self._stack:
-            print("STACK IS EMPTY, TRYING TO FIND A HANDLER")
-
             handler = self._container_block_chain(
                 self._cursor.current,
-                cast(
-                    typ="str",
-                    val=self._cursor.peek,
-                ),
+                cast(typ="str", val=self._cursor.peek),
             ) or self._leaf_block_chain(
                 self._cursor.current,
-                cast(
-                    typ="str",
-                    val=self._cursor.peek,
-                ),
+                cast(typ="str", val=self._cursor.peek),
             )
 
             if not handler:
-                raise RuntimeError("No handler found!")
-
-            print(f"FOUND HANDLER: {handler.__class__.__name__}")
+                return Action.ADVANCE
 
             self._stack.append(handler)
+            if isinstance(handler, (ContainerBlock, ContainerInline)):
+                self._document.append(_NODE_MAP[type(handler)]([]))  # type: ignore[arg-type]
 
             return handler(
                 self._cursor.current,
-                cast(
-                    typ="str",
-                    val=self._cursor.peek,
-                ),
+                cast(typ="str", val=self._cursor.peek),
             )
 
         if isinstance(self._stack[-1], ContainerBlock):
-            print("TOP OF STACK IS CONTAINER BLOCK")
-
-            action = self._stack[-1](
+            action: Action = self._stack[-1](
                 self._cursor.current,
                 cast(typ="str", val=self._cursor.peek),
             )
@@ -107,31 +199,38 @@ class Engine:
             if action is not Action.DELEGATE:
                 return action
 
-            print("CONTAINER DELEGATED, TRYING TO FIND A CHILD HANDLER")
-
-            handler = (
-                self._container_block_chain(
+            if isinstance(self._stack[-1], InlineContainerBlock):
+                handler = self._container_inline_chain(
+                    self._cursor.current,
+                    cast(typ="str", val=self._cursor.peek),
+                ) or self._leaf_inline_chain(
                     self._cursor.current,
                     cast(typ="str", val=self._cursor.peek),
                 )
-                or self._leaf_block_chain(
-                    self._cursor.current,
-                    cast(typ="str", val=self._cursor.peek),
+            else:
+                handler = (
+                    self._container_block_chain(
+                        self._cursor.current,
+                        cast(typ="str", val=self._cursor.peek),
+                    )
+                    or self._leaf_block_chain(
+                        self._cursor.current,
+                        cast(typ="str", val=self._cursor.peek),
+                    )
+                    or self._container_inline_chain(
+                        self._cursor.current,
+                        cast(typ="str", val=self._cursor.peek),
+                    )
+                    or self._leaf_inline_chain(
+                        self._cursor.current,
+                        cast(typ="str", val=self._cursor.peek),
+                    )
                 )
-                or self._container_inline_chain(
-                    self._cursor.current,
-                    cast(typ="str", val=self._cursor.peek),
-                )
-                or self._leaf_inline_chain(
-                    self._cursor.current,
-                    cast(typ="str", val=self._cursor.peek),
-                )
-            )
 
             if handler is not None:
-                print(f"FOUND HANDLER: {handler.__class__.__name__}")
-
                 self._stack.append(handler)
+                if isinstance(handler, (ContainerBlock, ContainerInline)):
+                    self._document.append(_NODE_MAP[type(handler)]([]))  # type: ignore[arg-type]
 
                 return handler(
                     self._cursor.current,
@@ -150,7 +249,13 @@ class Engine:
             )
 
         if isinstance(self._stack[-1], ContainerInline):
-            print("TOP OF STACK IS CONTAINER INLINE, TRYING TO FIND A HANDLER")
+            action: Action = self._stack[-1](
+                self._cursor.current,
+                cast(typ="str", val=self._cursor.peek),
+            )
+
+            if action is not Action.DELEGATE:
+                return action
 
             handler = self._container_inline_chain(
                 self._cursor.current,
@@ -161,52 +266,47 @@ class Engine:
             )
 
             if handler is not None:
-                print(f"FOUND HANDLER: {handler.__class__.__name__}")
-
                 self._stack.append(handler)
+                if isinstance(handler, (ContainerBlock, ContainerInline)):
+                    self._document.append(_NODE_MAP[type(handler)]([]))  # type: ignore[arg-type]
+
                 return handler(
                     self._cursor.current,
-                    cast(
-                        typ="str",
-                        val=self._cursor.peek,
-                    ),
+                    cast(typ="str", val=self._cursor.peek),
                 )
 
-        if isinstance(self._stack[-1], LeafInline):
-            print("TOP OF STACK IS LEAF INLINE, CALLING IT")
+            return Action.ADVANCE
 
+        if isinstance(self._stack[-1], LeafInline):
             return self._stack[-1](
                 self._cursor.current,
-                cast(
-                    typ="str",
-                    val=self._cursor.peek,
-                ),
+                cast(typ="str", val=self._cursor.peek),
             )
 
         return Action.ADVANCE
 
     def __call__(self, cursor: Cursor) -> list[Node]:
         self._cursor: Cursor = cursor
+        self._stack: list = []  # TODO: typehint
+        self._document: list[Node] = []
 
         while True:
             if self._cursor.peek is None:
-                print("End of input reached, may not all tags were closed")
-                # TODO: handle stack unclosed tags
+                while self._stack:
+                    self._emit(self._stack.pop())
                 break
 
             action: Action = self._dispatch()
-
-            print(f"Action: {action}")
 
             match action:
                 case Action.ADVANCE:
                     self._cursor.advance()
 
                 case Action.POP:
-                    self._stack.pop()
+                    self._emit(self._stack.pop())
 
                 case Action.POP_AND_ADVANCE:
-                    self._stack.pop()
+                    self._emit(self._stack.pop())
                     self._cursor.advance()
 
         self._cursor: None = None

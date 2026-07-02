@@ -17,9 +17,7 @@ class HandlerChain(Generic[H]):
 
     def __call__(self, current: str, peek: str, /) -> H | None:
         for handler_cls in self._handlers:
-            handler: H | None = handler_cls.matches(current, peek)
-
-            if handler is not None:
+            if (handler := handler_cls.matches(current, peek)) is not None:
                 return handler
 
         return None
