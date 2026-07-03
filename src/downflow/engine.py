@@ -2,99 +2,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Final, cast
 
-from downflow.abstract_syntax_tree.base import (
-    ATXHeadingNode,
-    AutoLinkNode,
-    BlockquoteNode,
-    CodeSpanNode,
-    ContainerNode,
-    EmphasisNode,
-    FencedCodeBlockNode,
-    HardlineBreakNode,
-    HTMLBlockNode,
-    ImageNode,
-    IndentedCodeBlockNode,
-    LinkNode,
-    LinkReferenceDefinitionNode,
-    ListItemNode,
-    ListNode,
-    Node,
-    OrderedListItemNode,
-    ParagraphNode,
-    RawHTMLNode,
-    SoftlineBreakNode,
-    StrikethroughNode,
-    StrongEmphasisNode,
-    TextNode,
-    ThematicBreakNode,
-)
-from downflow.handler.container_blocks import (
-    Blockquote,
-    ContainerBlock,
-    InlineContainerBlock,
-    List,
-    ListItem,
-    OrderedListItem,
-)
-from downflow.handler.container_inlines import (
-    ContainerInline,
-    Emphasis,
-    Image,
-    Link,
-    Strikethrough,
-    StrongEmphasis,
-)
-from downflow.handler.leaf_blocks import (
-    ATXHeading,
-    FencedCodeBlock,
-    HTMLBlock,
-    IndentedCodeBlock,
-    LeafBlock,
-    LinkReferenceDefinition,
-    Paragraph,
-    ThematicBreak,
-)
-from downflow.handler.leaf_inlines import (
-    AutoLink,
-    CodeSpan,
-    HardlineBreak,
-    LeafInline,
-    RawHTML,
-    SoftlineBreak,
-    Text,
-)
+from downflow.handler.container_blocks import ContainerBlock, InlineContainerBlock
+from downflow.handler.container_inlines import ContainerInline
+from downflow.handler.leaf_blocks import LeafBlock
+from downflow.handler.leaf_inlines import LeafInline
+from downflow.mapper import Mapper
 
 from .action import Action
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-_NODE_MAP: dict[type, Callable[..., Node]] = {
-    Blockquote: BlockquoteNode,
-    List: ListNode,
-    ListItem: ListItemNode,
-    OrderedListItem: OrderedListItemNode,
-    ThematicBreak: ThematicBreakNode,
-    ATXHeading: ATXHeadingNode,
-    IndentedCodeBlock: IndentedCodeBlockNode,
-    FencedCodeBlock: FencedCodeBlockNode,
-    HTMLBlock: HTMLBlockNode,
-    LinkReferenceDefinition: LinkReferenceDefinitionNode,
-    Paragraph: ParagraphNode,
-    Emphasis: EmphasisNode,
-    StrongEmphasis: StrongEmphasisNode,
-    Link: LinkNode,
-    Image: ImageNode,
-    Strikethrough: StrikethroughNode,
-    CodeSpan: CodeSpanNode,
-    AutoLink: AutoLinkNode,
-    RawHTML: RawHTMLNode,
-    HardlineBreak: HardlineBreakNode,
-    SoftlineBreak: SoftlineBreakNode,
-    Text: TextNode,
-}
-
-if TYPE_CHECKING:
+    from downflow.abstract_syntax_tree.base import ContainerNode, Node
     from downflow.cursor import Cursor
 
     from .handler import HandlerChain
@@ -108,6 +25,8 @@ class Engine:
         leaf_block_chain: HandlerChain[LeafBlock],
         container_inline_chain: HandlerChain[ContainerInline],
         leaf_inline_chain: HandlerChain[LeafInline],
+        block_fallback: type[InlineContainerBlock] | None = None,
+        mapper: Mapper | None = None,
     ) -> None:
         self._cursor: Cursor | None = None
 
@@ -119,11 +38,13 @@ class Engine:
             container_inline_chain
         )
         self._leaf_inline_chain: Final[HandlerChain[LeafInline]] = leaf_inline_chain
+        self._block_fallback: Final[type[InlineContainerBlock] | None] = block_fallback
+        self._mapper: Final[Mapper] = mapper if mapper is not None else Mapper()
 
         self._stack: list[
             ContainerBlock | LeafBlock | ContainerInline | LeafInline
         ] = []
-        self._document: list[Node] = []
+        self._tree: list[Node] = []
 
     def append(
         self,
@@ -147,151 +68,113 @@ class Engine:
         /,
     ) -> None:
         if isinstance(handler, (ContainerBlock, ContainerInline)):
+            self._mapper.finalize(handler, self._tree[-1])
             if self._stack and isinstance(
                 self._stack[-1],
                 (ContainerBlock, ContainerInline),
             ):
-                node: Node = self._document.pop()
-                cast("ContainerNode", self._document[-1]).append(node)
+                node: Node = self._tree.pop()
+                cast(typ="ContainerNode", val=self._tree[-1]).append(node)
         else:
-            node = _NODE_MAP[type(handler)](handler.content)  # type: ignore[union-attr]
+            node: Node = self._mapper[type(handler)](handler.content)  # type: ignore[union-attr]
             if self._stack and isinstance(
                 self._stack[-1],
                 (ContainerBlock, ContainerInline),
             ):
-                cast("ContainerNode", self._document[-1]).append(node)
+                cast(typ="ContainerNode", val=self._tree[-1]).append(node)
             else:
-                self._document.append(node)
+                self._tree.append(node)
 
-    def _dispatch(self) -> Action:  # noqa: PLR0911
-        self._cursor: Cursor = cast(
-            typ="Cursor",
-            val=self._cursor,
+    def _match_block(
+        self,
+        current: str,
+        peek: str,
+    ) -> ContainerBlock | LeafBlock | None:
+        handler = self._container_block_chain(current, peek) or self._leaf_block_chain(
+            current,
+            peek,
+        )
+        if handler is None and self._block_fallback is not None:
+            handler = self._block_fallback.matches(current, peek)
+        return handler
+
+    def _match_inline(
+        self,
+        current: str,
+        peek: str,
+    ) -> ContainerInline | LeafInline | None:
+        return self._container_inline_chain(current, peek) or self._leaf_inline_chain(
+            current,
+            peek,
         )
 
-        if not self._stack:
-            handler = self._container_block_chain(
-                self._cursor.current,
-                cast(typ="str", val=self._cursor.peek),
-            ) or self._leaf_block_chain(
-                self._cursor.current,
-                cast(typ="str", val=self._cursor.peek),
-            )
+    def _push(
+        self,
+        handler: ContainerBlock | LeafBlock | ContainerInline | LeafInline,
+    ) -> None:
+        self._stack.append(handler)
+        if isinstance(handler, (ContainerBlock, ContainerInline)):
+            self._tree.append(self._mapper[type(handler)]([]))  # type: ignore[arg-type]
 
+    def _dispatch(self) -> Action:  # noqa: PLR0911
+        cursor: Cursor = cast(typ="Cursor", val=self._cursor)
+        current: str = cursor.current
+        peek: str = cast(typ="str", val=cursor.peek)
+
+        if not self._stack:
+            handler = self._match_block(current, peek)
             if not handler:
                 return Action.ADVANCE
+            self._push(handler)
+            return handler(current, peek)
 
-            self._stack.append(handler)
-            if isinstance(handler, (ContainerBlock, ContainerInline)):
-                self._document.append(_NODE_MAP[type(handler)]([]))  # type: ignore[arg-type]
+        top = self._stack[-1]
 
-            return handler(
-                self._cursor.current,
-                cast(typ="str", val=self._cursor.peek),
-            )
-
-        if isinstance(self._stack[-1], ContainerBlock):
-            action: Action = self._stack[-1](
-                self._cursor.current,
-                cast(typ="str", val=self._cursor.peek),
-            )
-
+        if isinstance(top, ContainerBlock):
+            action: Action = top(current, peek)
             if action is not Action.DELEGATE:
                 return action
-
-            if isinstance(self._stack[-1], InlineContainerBlock):
-                handler = self._container_inline_chain(
-                    self._cursor.current,
-                    cast(typ="str", val=self._cursor.peek),
-                ) or self._leaf_inline_chain(
-                    self._cursor.current,
-                    cast(typ="str", val=self._cursor.peek),
-                )
+            if isinstance(top, InlineContainerBlock):
+                handler = self._match_inline(current, peek)
             else:
-                handler = (
-                    self._container_block_chain(
-                        self._cursor.current,
-                        cast(typ="str", val=self._cursor.peek),
-                    )
-                    or self._leaf_block_chain(
-                        self._cursor.current,
-                        cast(typ="str", val=self._cursor.peek),
-                    )
-                    or self._container_inline_chain(
-                        self._cursor.current,
-                        cast(typ="str", val=self._cursor.peek),
-                    )
-                    or self._leaf_inline_chain(
-                        self._cursor.current,
-                        cast(typ="str", val=self._cursor.peek),
-                    )
+                handler = self._match_block(current, peek) or self._match_inline(
+                    current,
+                    peek,
                 )
-
             if handler is not None:
-                self._stack.append(handler)
-                if isinstance(handler, (ContainerBlock, ContainerInline)):
-                    self._document.append(_NODE_MAP[type(handler)]([]))  # type: ignore[arg-type]
-
-                return handler(
-                    self._cursor.current,
-                    cast(typ="str", val=self._cursor.peek),
-                )
-
+                self._push(handler)
+                return handler(current, peek)
             return Action.ADVANCE
 
-        if isinstance(self._stack[-1], LeafBlock):
-            return self._stack[-1](
-                self._cursor.current,
-                cast(
-                    typ="str",
-                    val=self._cursor.peek,
-                ),
-            )
+        if isinstance(top, LeafBlock):
+            return top(current, peek)
 
-        if isinstance(self._stack[-1], ContainerInline):
-            action: Action = self._stack[-1](
-                self._cursor.current,
-                cast(typ="str", val=self._cursor.peek),
-            )
-
+        if isinstance(top, ContainerInline):
+            if current == "\n" and cursor.peek == "\n":
+                return Action.POP
+            action = top(current, peek)
             if action is not Action.DELEGATE:
                 return action
-
-            handler = self._container_inline_chain(
-                self._cursor.current,
-                cast(typ="str", val=self._cursor.peek),
-            ) or self._leaf_inline_chain(
-                self._cursor.current,
-                cast(typ="str", val=self._cursor.peek),
-            )
-
+            handler = self._match_inline(current, peek)
             if handler is not None:
-                self._stack.append(handler)
-                if isinstance(handler, (ContainerBlock, ContainerInline)):
-                    self._document.append(_NODE_MAP[type(handler)]([]))  # type: ignore[arg-type]
-
-                return handler(
-                    self._cursor.current,
-                    cast(typ="str", val=self._cursor.peek),
-                )
-
+                self._push(handler)
+                return handler(current, peek)
             return Action.ADVANCE
 
-        if isinstance(self._stack[-1], LeafInline):
-            return self._stack[-1](
-                self._cursor.current,
-                cast(typ="str", val=self._cursor.peek),
-            )
+        if isinstance(top, LeafInline):
+            return top(current, peek)
 
         return Action.ADVANCE
 
     def __call__(self, cursor: Cursor) -> list[Node]:
         self._cursor: Cursor = cursor
-        self._stack: list = []  # TODO: typehint
-        self._document: list[Node] = []
+        self._stack: list[
+            ContainerBlock | LeafBlock | ContainerInline | LeafInline
+        ] = []
+        self._tree: list[Node] = []
 
         while True:
-            if self._cursor.peek is None:
+            if self._cursor.is_exhausted:
                 while self._stack:
                     self._emit(self._stack.pop())
                 break
@@ -310,4 +193,4 @@ class Engine:
                     self._cursor.advance()
 
         self._cursor: None = None
-        return self._document
+        return self._tree

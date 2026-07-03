@@ -49,7 +49,7 @@ class AutoLink(LeafInline):
 
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:
-        if current == "<":
+        if current == "<" and peek not in ("!", "?", "/"):
             return cls()
         return None
 
@@ -72,7 +72,7 @@ class RawHTML(LeafInline):
 
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:
-        if current == "<":
+        if current == "<" and peek in ("!", "?", "/"):
             return cls()
         return None
 

@@ -8,6 +8,10 @@ class ContainerNode(Node):
     def __init__(self, children: list[Node]) -> None:
         self._children: list[Node] = children
 
+    @property
+    def children(self) -> list[Node]:
+        return self._children
+
     def append(self, node: Node, /) -> None:
         if (
             self._children
@@ -15,7 +19,7 @@ class ContainerNode(Node):
             and isinstance(node, LeafNode)
             and type(self._children[-1]) is type(node)
         ):
-            self._children[-1]._content += node._content  # type: ignore[attr-defined]
+            self._children[-1].content += node.content  # type: ignore[union-attr]
         else:
             self._children.append(node)
 
@@ -27,11 +31,18 @@ class LeafNode(Node):
     def __init__(self, content: str) -> None:
         self._content: str = content
 
+    @property
+    def content(self) -> str:
+        return self._content
+
+    @content.setter
+    def content(self, value: str, /) -> None:
+        self._content = value
+
     def __repr__(self) -> str:
-        return f"{self.__class__.__name__}({self._content!r})"
+        return f"{self.__class__.__name__}({self.content!r})"
 
 
-## Block nodes
 class BlockquoteNode(ContainerNode): ...
 
 
@@ -72,10 +83,32 @@ class EmphasisNode(ContainerNode): ...
 class StrongEmphasisNode(ContainerNode): ...
 
 
-class LinkNode(ContainerNode): ...
+class LinkNode(ContainerNode):
+    def __init__(self, children: list[Node], url: str = "") -> None:
+        super().__init__(children)
+        self._url: str = url
+
+    @property
+    def url(self) -> str:
+        return self._url
+
+    @url.setter
+    def url(self, value: str, /) -> None:
+        self._url = value
 
 
-class ImageNode(ContainerNode): ...
+class ImageNode(ContainerNode):
+    def __init__(self, children: list[Node], url: str = "") -> None:
+        super().__init__(children)
+        self._url: str = url
+
+    @property
+    def url(self) -> str:
+        return self._url
+
+    @url.setter
+    def url(self, value: str, /) -> None:
+        self._url = value
 
 
 class StrikethroughNode(ContainerNode): ...

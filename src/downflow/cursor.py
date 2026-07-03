@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import final
 
 
@@ -22,5 +24,9 @@ class Cursor:
 
         return None
 
-    def advance(self, count: int = 1) -> None:
-        self._position: int = min(self._position + count, len(self._text))
+    @property
+    def is_exhausted(self) -> bool:
+        return self._position >= len(self._text)
+
+    def advance(self) -> None:
+        self._position += 1

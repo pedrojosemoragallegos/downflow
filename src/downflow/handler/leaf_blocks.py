@@ -5,7 +5,6 @@ from typing import Self, final
 from downflow.action import Action
 
 from .base import Handler
-from .container_blocks import InlineContainerBlock
 
 
 ## LEAF-BLOCK HANDLER
@@ -76,6 +75,11 @@ class IndentedCodeBlock(LeafBlock):
     def __init__(self) -> None:
         super().__init__()
         self._indent: int = 0
+        self._at_line_start: bool = False
+
+    @property
+    def content(self) -> str:
+        return self._content.rstrip("\n")
 
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:
@@ -85,10 +89,17 @@ class IndentedCodeBlock(LeafBlock):
         return None
 
     def __call__(self, current: str, peek: str, /) -> Action:
+        if current == "\n":
+            self._at_line_start = True
+            self._indent = 0
+            self._content += current
+            return Action.ADVANCE
         if current == " " and self._indent < 4:
             self._indent += 1
+            if self._indent == 4:
+                self._at_line_start = False
             return Action.ADVANCE
-        if current == "\n":
+        if self._at_line_start:
             return Action.POP
         self._content += current
         return Action.ADVANCE
@@ -124,6 +135,7 @@ class FencedCodeBlock(LeafBlock):
         if self._at_line_start and current == "`":
             self._closing_count += 1
             if self._closing_count >= 3:
+                self._content = self._content.removesuffix("\n")
                 return Action.POP_AND_ADVANCE
             return Action.ADVANCE
         self._at_line_start = False
@@ -160,20 +172,7 @@ class LinkReferenceDefinition(LeafBlock):
         return None
 
     def __call__(self, current: str, peek: str, /) -> Action:
-        self._content += current
-        return Action.ADVANCE
-
-
-## Paragraph Handler
-@final
-class Paragraph(InlineContainerBlock):
-    @classmethod
-    def matches(cls, current: str, peek: str, /) -> Self | None:
-        if current in (" ", "\t", "\n", "\r"):
-            return None
-        return cls()
-
-    def __call__(self, current: str, peek: str, /) -> Action:
         if current == "\n" and peek == "\n":
             return Action.POP
-        return Action.DELEGATE
+        self._content += current
+        return Action.ADVANCE

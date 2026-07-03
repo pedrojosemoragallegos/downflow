@@ -54,8 +54,10 @@ class StrongEmphasis(ContainerInline):
         if current == "*":
             if self._closer_started:
                 return Action.POP_AND_ADVANCE
-            self._closer_started = True
-            return Action.ADVANCE
+            if peek == "*":
+                self._closer_started = True
+                return Action.ADVANCE
+            return Action.DELEGATE
         self._closer_started = False
         return Action.DELEGATE
 
@@ -67,6 +69,11 @@ class Link(ContainerInline):
         self._opened: bool = False
         self._closing: bool = False
         self._url_open: bool = False
+        self._url: str = ""
+
+    @property
+    def url(self) -> str:
+        return self._url
 
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:
@@ -87,6 +94,7 @@ class Link(ContainerInline):
                 return Action.POP
             if current == ")":
                 return Action.POP_AND_ADVANCE
+            self._url += current
             return Action.ADVANCE
         if current == "]":
             self._closing = True
@@ -102,6 +110,11 @@ class Image(ContainerInline):
         self._opened: bool = False
         self._closing: bool = False
         self._url_open: bool = False
+        self._url: str = ""
+
+    @property
+    def url(self) -> str:
+        return self._url
 
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:
@@ -125,6 +138,7 @@ class Image(ContainerInline):
                 return Action.POP
             if current == ")":
                 return Action.POP_AND_ADVANCE
+            self._url += current
             return Action.ADVANCE
         if current == "]":
             self._closing = True

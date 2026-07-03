@@ -57,6 +57,7 @@ class Blockquote(ContainerBlock):
 class List(ContainerBlock):
     def __init__(self) -> None:
         self._at_line_start: bool = True
+        self._consuming_marker: bool = False
 
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:
@@ -68,12 +69,17 @@ class List(ContainerBlock):
     def __call__(self, current: str, peek: str, /) -> Action:
         if current == "\n":
             self._at_line_start = True
+            self._consuming_marker = False
             return Action.ADVANCE
         if self._at_line_start:
             if current == "-" and peek == " ":
                 self._at_line_start = False
-                return Action.DELEGATE
+                self._consuming_marker = True
+                return Action.ADVANCE
             return Action.POP
+        if self._consuming_marker:
+            self._consuming_marker = False
+            return Action.ADVANCE
         return Action.DELEGATE
 
 
@@ -104,21 +110,41 @@ class ListItem(ContainerBlock):
 class OrderedListItem(ContainerBlock):
     def __init__(self) -> None:
         self._past_marker: bool = False
+        self._dot_seen: bool = False
 
     @classmethod
     def matches(cls, current: str, peek: str, /) -> Self | None:
-        if current.isdigit() and peek == ".":
+        if current.isdigit() and peek is not None and (peek.isdigit() or peek == "."):
             return cls()
 
         return None
 
     def __call__(self, current: str, peek: str, /) -> Action:
         if not self._past_marker:
-            if current in "0123456789.":
+            if current.isdigit():
                 return Action.ADVANCE
-            if current == " ":
+            if current == ".":
+                self._dot_seen = True
+                return Action.ADVANCE
+            if current == " " and self._dot_seen:
                 self._past_marker = True
                 return Action.ADVANCE
+            return Action.DELEGATE
         if current == "\n":
+            return Action.POP
+        return Action.DELEGATE
+
+
+## Paragraph Handler
+@final
+class Paragraph(InlineContainerBlock):
+    @classmethod
+    def matches(cls, current: str, peek: str, /) -> Self | None:
+        if current in (" ", "\t", "\n", "\r"):
+            return None
+        return cls()
+
+    def __call__(self, current: str, peek: str, /) -> Action:
+        if current == "\n" and peek == "\n":
             return Action.POP
         return Action.DELEGATE
